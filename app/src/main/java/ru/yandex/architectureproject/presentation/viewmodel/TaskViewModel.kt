@@ -3,6 +3,8 @@ package ru.yandex.architectureproject.presentation.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,6 +20,8 @@ import ru.yandex.architectureproject.domain.IncompleteTaskUseCase
 import ru.yandex.architectureproject.presentation.state.TaskAction
 import ru.yandex.architectureproject.presentation.state.TaskState
 
+private const val autoDeleteDelay = 10000L
+
 class TaskViewModel(
     private val addTaskUseCase: AddTaskUseCase,
     private val deleteTaskUseCase: DeleteTaskUseCase,
@@ -28,21 +32,47 @@ class TaskViewModel(
 ) : ViewModel() {
     private val _state = MutableStateFlow<TaskState>(TaskState.Loading)
     val state: StateFlow<TaskState> = _state.asStateFlow()
+    val taskDeleteJobs = mutableMapOf<Int, Job>()
 
     init {
         reduce(TaskAction.LoadTasks)
     }
 
     fun reduce(action: TaskAction) {
-        // TODO: Здесь должна быть обработка действий
+        viewModelScope.launch {
+            withContext(ioDispatcher) {
+                when (action) {
+                    is TaskAction.AddTask -> addTaskUseCase(action.taskText)
+
+                    is TaskAction.DeleteTask -> {
+                        deleteTaskUseCase(action.taskId)
+                        taskDeleteJobs.remove(action.taskId)?.cancel()
+                    }
+
+                    is TaskAction.UpdateTaskStatus -> if (action.complete) {
+                        completeTaskUseCase(action.taskId)
+                        taskDeleteJobs[action.taskId] = launch {
+                            delay(autoDeleteDelay)
+                            reduce(TaskAction.DeleteTask(action.taskId))
+                        }
+                    } else {
+                        incompleteTaskUseCase(action.taskId)
+                        taskDeleteJobs.remove(action.taskId)?.cancel()
+
+                    }
+
+                    TaskAction.LoadTasks -> {}
+                }
+                loadTasks()
+            }
+        }
     }
 
     private suspend fun loadTasks() {
-        withContext(ioDispatcher) {
-            getAllTasksUseCase()
-                .onStart { _state.value = TaskState.Loading }
-                .catch { e -> _state.value = TaskState.Error(e.message ?: "Ошибка загрузки") }
-                .collect { tasks -> _state.value = TaskState.Loaded(tasks) }
-        }
+        getAllTasksUseCase()
+            .onStart { _state.value = TaskState.Loading }
+            .catch { e -> _state.value = TaskState.Error(e.message ?: "Ошибка загрузки") }
+            .collect { tasks -> _state.value = TaskState.Loaded(tasks) }
     }
+
 }
