@@ -105,7 +105,7 @@ class MainActivity : ComponentActivity() {
             }
 
             LazyColumn {
-                items(tasks) { task ->
+                items(tasks, key = {it.id}) { task ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
